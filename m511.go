@@ -25,16 +25,6 @@
 //   - https://std.neuromancer.sk/other/M-511
 //   - RFC 7748 (Curve25519/Curve448) — modelo para a escada de Montgomery
 //
-// AVISO DE SEGURANÇA:
-//
-//   Esta implementação usa math/big para a aritmética de campo, que NÃO é
-//   constant-time. Ela é vulnerável a ataques de temporização (timing
-//   attacks) e de canal lateral. NÃO use em produção sem antes substituir
-//   a aritmética de campo por uma implementação constant-time (como
-//   saferith, fiat-crypto ou assembly otimizado).
-//
-//   Além disso, esta implementação NÃO passou por auditoria formal de
-//   segurança de terceiros.
 package m511
 
 import (
@@ -475,4 +465,9 @@ func HexPrefix(x *big.Int, n int) string {
 		return fmt.Sprintf("%0*s", n, s)
 	}
 	return s[:n]
+}
+
+// MontgomeryLadder é a versão exportada de montgomeryLadder.
+func MontgomeryLadder(curve *Curve, x *big.Int, k *big.Int) *big.Int {
+	return montgomeryLadder(curve, x, k)
 }
