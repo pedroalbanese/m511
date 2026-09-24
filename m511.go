@@ -21,6 +21,7 @@ package m511
 
 import (
 	"crypto/rand"
+	"encoding/asn1"
 	"encoding/hex"
 	"errors"
 	"fmt"
