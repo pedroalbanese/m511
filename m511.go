@@ -447,3 +447,141 @@ func HexPrefix(x *big.Int, n int) string {
 func MontgomeryLadder(curve *Curve, x *big.Int, k *big.Int) *big.Int {
 	return montgomeryLadder(curve, x, k)
 }
+
+// -----------------------------------------------------------------------------
+// PKCS#8 e PKIX (ASN.1)
+// -----------------------------------------------------------------------------
+
+// OID fictício para M-511 (a curva não tem OID oficial).
+// Usamos um OID na faixa "experimental" para evitar colisões.
+var oidM511 = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1, 1}
+
+// pkAlgorithmIdentifier é a estrutura ASN.1 para AlgorithmIdentifier.
+type pkAlgorithmIdentifier struct {
+	Algorithm  asn1.ObjectIdentifier
+	Parameters asn1.RawValue `asn1:"optional"`
+}
+
+// pkcs8PrivateKey é a estrutura ASN.1 para PrivateKeyInfo (PKCS#8).
+type pkcs8PrivateKey struct {
+	Version             int
+	PrivateKeyAlgorithm pkAlgorithmIdentifier
+	PrivateKey          []byte
+}
+
+// pkixPublicKey é a estrutura ASN.1 para SubjectPublicKeyInfo (PKIX).
+type pkixPublicKey struct {
+	Algorithm        pkAlgorithmIdentifier
+	SubjectPublicKey asn1.BitString
+}
+
+// MarshalPKCS8PrivateKey serializa a chave privada no formato PKCS#8 (DER).
+func (priv *PrivateKey) MarshalPKCS8PrivateKey() ([]byte, error) {
+	curve := priv.Curve
+	if curve == nil {
+		curve = M511()
+		priv.Curve = curve
+	}
+
+	if priv.D.Sign() <= 0 || priv.D.Cmp(curve.Order) >= 0 {
+		return nil, errors.New("m511: escalar privado fora do intervalo")
+	}
+
+	dBytes := bigToFixedBytes(priv.D, 64)
+
+	info := pkcs8PrivateKey{
+		Version: 0,
+		PrivateKeyAlgorithm: pkAlgorithmIdentifier{
+			Algorithm:  oidM511,
+			Parameters: asn1.RawValue{Tag: asn1.TagOID},
+		},
+		PrivateKey: dBytes,
+	}
+
+	return asn1.Marshal(info)
+}
+
+// ParsePKCS8PrivateKey desserializa uma chave privada do formato PKCS#8 (DER).
+func ParsePKCS8PrivateKey(der []byte) (*PrivateKey, error) {
+	var info pkcs8PrivateKey
+	if _, err := asn1.Unmarshal(der, &info); err != nil {
+		return nil, fmt.Errorf("m511: falha ao parsear PKCS#8: %w", err)
+	}
+
+	if !info.PrivateKeyAlgorithm.Algorithm.Equal(oidM511) {
+		return nil, errors.New("m511: OID inválido em PKCS#8")
+	}
+
+	if len(info.PrivateKey) != 64 {
+		return nil, fmt.Errorf("m511: tamanho inválido de chave privada: %d", len(info.PrivateKey))
+	}
+
+	curve := M511()
+	d := new(big.Int).SetBytes(info.PrivateKey)
+	if d.Sign() == 0 || d.Cmp(curve.Order) >= 0 {
+		return nil, errors.New("m511: escalar privado fora do intervalo")
+	}
+
+	return &PrivateKey{D: d, Curve: curve}, nil
+}
+
+// MarshalPKIXPublicKey serializa a chave pública no formato PKIX (DER).
+func (pub *PublicKey) MarshalPKIXPublicKey() ([]byte, error) {
+	curve := pub.Curve
+	if curve == nil {
+		curve = M511()
+		pub.Curve = curve
+	}
+
+	if pub.X == nil {
+		return nil, errors.New("m511: chave pública nula")
+	}
+	if pub.X.Sign() < 0 || pub.X.Cmp(curve.P) >= 0 {
+		return nil, errors.New("m511: coordenada X fora do corpo")
+	}
+	if !curve.IsOnCurve(pub.X) {
+		return nil, errors.New("m511: ponto não está na curva")
+	}
+
+	xBytes := bigToFixedBytes(pub.X, 64)
+
+	info := pkixPublicKey{
+		Algorithm: pkAlgorithmIdentifier{
+			Algorithm:  oidM511,
+			Parameters: asn1.RawValue{Tag: asn1.TagOID},
+		},
+		SubjectPublicKey: asn1.BitString{
+			Bytes:     xBytes,
+			BitLength: len(xBytes) * 8,
+		},
+	}
+
+	return asn1.Marshal(info)
+}
+
+// ParsePKIXPublicKey desserializa uma chave pública do formato PKIX (DER).
+func ParsePKIXPublicKey(der []byte) (*PublicKey, error) {
+	var info pkixPublicKey
+	if _, err := asn1.Unmarshal(der, &info); err != nil {
+		return nil, fmt.Errorf("m511: falha ao parsear PKIX: %w", err)
+	}
+
+	if !info.Algorithm.Algorithm.Equal(oidM511) {
+		return nil, errors.New("m511: OID inválido em PKIX")
+	}
+
+	if len(info.SubjectPublicKey.Bytes) != 64 {
+		return nil, fmt.Errorf("m511: tamanho inválido de chave pública: %d", len(info.SubjectPublicKey.Bytes))
+	}
+
+	curve := M511()
+	x := new(big.Int).SetBytes(info.SubjectPublicKey.Bytes)
+	if x.Cmp(curve.P) >= 0 {
+		return nil, errors.New("m511: coordenada X fora do corpo")
+	}
+	if !curve.IsOnCurve(x) {
+		return nil, errors.New("m511: ponto não está na curva")
+	}
+
+	return &PublicKey{X: x, Curve: curve}, nil
+}
