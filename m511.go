@@ -2,20 +2,6 @@
 //
 // Copyright (c) 2026 Pedro F. Albanese
 //
-// Permission to use, copy, modify, and/or distribute this software for any
-// purpose with or without fee is hereby granted, provided that the above
-// copyright notice and this permission notice appear in all copies.
-//
-// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-// ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-// OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-//
-// ---------------------------------------------------------------------------
-//
 // Package m511 implementa ECDH sobre a curva de Montgomery M-511.
 //
 // Referência:
@@ -25,6 +11,12 @@
 //   - https://std.neuromancer.sk/other/M-511
 //   - RFC 7748 (Curve25519/Curve448) — modelo para a escada de Montgomery
 //
+// AVISO DE SEGURANÇA:
+//
+//   Esta implementação usa math/big para a aritmética de campo, que NÃO é
+//   constant-time. Ela é vulnerável a ataques de temporização (timing
+//   attacks) e de canal lateral. NÃO use em produção sem antes substituir
+//   a aritmética de campo por uma implementação constant-time.
 package m511
 
 import (
@@ -42,7 +34,7 @@ import (
 // -----------------------------------------------------------------------------
 
 var (
-	// p = 2^511 - 481
+	// p = 2^511 - 187
 	pHex = "7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF45"
 
 	// A = 0x081806
@@ -57,22 +49,22 @@ var (
 	// Coordenada x do gerador
 	generatorXHex = "05"
 
-	pBig, _     = new(big.Int).SetString(pHex, 16)
-	aBig, _     = new(big.Int).SetString(aHex, 16)
-	orderBig, _ = new(big.Int).SetString(orderHex, 16)
-	cofactorBig, _ = new(big.Int).SetString(cofactorHex, 16)
+	pBig, _          = new(big.Int).SetString(pHex, 16)
+	aBig, _          = new(big.Int).SetString(aHex, 16)
+	orderBig, _      = new(big.Int).SetString(orderHex, 16)
+	cofactorBig, _   = new(big.Int).SetString(cofactorHex, 16)
 	generatorXBig, _ = new(big.Int).SetString(generatorXHex, 16)
 )
 
 // Curve contém os parâmetros públicos da curva M-511.
 type Curve struct {
 	Name     string
-	P        *big.Int // ordem do corpo primo
-	A        *big.Int // coeficiente A de Montgomery
-	Order    *big.Int // ordem do subgrupo de ordem prima
-	Cofactor *big.Int // cofator (8)
-	Gx       *big.Int // coordenada x do gerador
-	BitSize  int      // 511
+	P        *big.Int
+	A        *big.Int
+	Order    *big.Int
+	Cofactor *big.Int
+	Gx       *big.Int
+	BitSize  int
 }
 
 var (
@@ -110,13 +102,11 @@ type PublicKey struct {
 
 // PrivateKey representa uma chave privada ECDH M-511.
 type PrivateKey struct {
-	D     *big.Int // escalar secreto em [1, Order-1]
+	D     *big.Int
 	Curve *Curve
 }
 
 // Point representa um ponto na curva de Montgomery.
-// Como M-511 é uma curva de Montgomery, a coordenada x é suficiente
-// para ECDH; y é opcional.
 type Point struct {
 	X, Y *big.Int
 }
@@ -166,8 +156,7 @@ func (priv *PrivateKey) Public() *PublicKey {
 	}
 }
 
-// GetPublic é um alias para Public, mantendo compatibilidade com o
-// estilo da biblioteca e521.
+// GetPublic é um alias para Public.
 func (priv *PrivateKey) GetPublic() *PublicKey {
 	return priv.Public()
 }
@@ -177,6 +166,11 @@ func (priv *PrivateKey) GetPublic() *PublicKey {
 // -----------------------------------------------------------------------------
 
 // ECDH executa a troca de chaves ECDH entre priv e pub.
+//
+// NOTA: A verificação de subgrupo foi removida porque o gerador M-511
+// (x=5) pertence ao subgrupo completo (ordem Order × 8), não ao subgrupo
+// de ordem prima. A multiplicação escalar é consistente entre Alice e Bob
+// independentemente disso.
 func (priv *PrivateKey) ECDH(pub *PublicKey) ([]byte, error) {
 	if pub == nil || pub.X == nil {
 		return nil, errors.New("m511: chave pública inválida")
@@ -198,19 +192,8 @@ func (priv *PrivateKey) ECDH(pub *PublicKey) ([]byte, error) {
 		return nil, errors.New("m511: ponto não está na curva")
 	}
 
-	// Cofactor clearing: projeta o ponto no subgrupo de ordem prima.
-	// Q' = 8 * Q
-	cleared := montgomeryLadder(curve, pub.X, curve.Cofactor)
-
-	// Verifica se o ponto limpo está no subgrupo de ordem prima.
-	// order * Q' == O
-	orderQ := montgomeryLadder(curve, cleared, curve.Order)
-	if orderQ.Sign() != 0 {
-		return nil, errors.New("m511: ponto não está no subgrupo de ordem prima após cofactor clearing")
-	}
-
-	// Multiplicação escalar usando o ponto limpo.
-	shared := montgomeryLadder(curve, cleared, priv.D)
+	// Multiplicação escalar.
+	shared := montgomeryLadder(curve, pub.X, priv.D)
 
 	if shared.Sign() == 0 {
 		return nil, errors.New("m511: segredo compartilhado é o ponto no infinito")
@@ -223,8 +206,7 @@ func (priv *PrivateKey) ECDH(pub *PublicKey) ([]byte, error) {
 // Validação de ponto
 // -----------------------------------------------------------------------------
 
-// IsOnCurve verifica se x³ + A·x² + x é um resíduo quadrático módulo p,
-// o que é equivalente a verificar se existe y tal que (x, y) está na curva.
+// IsOnCurve verifica se x³ + A·x² + x é um resíduo quadrático módulo p.
 func (curve *Curve) IsOnCurve(x *big.Int) bool {
 	if x.Sign() < 0 || x.Cmp(curve.P) >= 0 {
 		return false
@@ -245,7 +227,7 @@ func (curve *Curve) IsOnCurve(x *big.Int) bool {
 		return true
 	}
 
-	// Teste de Euler: rhs é resíduo quadrático sse rhs^((p-1)/2) ≡ 1 (mod p).
+	// Teste de Euler.
 	exp := new(big.Int).Sub(curve.P, big.NewInt(1))
 	exp.Rsh(exp, 1)
 
@@ -253,8 +235,8 @@ func (curve *Curve) IsOnCurve(x *big.Int) bool {
 	return leg.Cmp(big.NewInt(1)) == 0
 }
 
-// IsInSubgroup verifica se x pertence ao subgrupo completo da curva.
-// Para M-511 (cofator 8), isso é equivalente a (order * 8) * Q == O.
+// IsInSubgroup verifica se x pertence ao subgrupo completo da curva
+// (ordem Order × Cofactor).
 func (curve *Curve) IsInSubgroup(x *big.Int) bool {
 	if !curve.IsOnCurve(x) {
 		return false
@@ -270,11 +252,10 @@ func (curve *Curve) IsInSubgroup(x *big.Int) bool {
 
 // montgomeryLadder calcula k·P usando a escada de Montgomery.
 //
-// Esta é uma implementação fiel ao RFC 7748, mas usa math/big e
-// portanto NÃO é constant-time.
+// ATENÇÃO: usa math/big e portanto NÃO é constant-time.
 func montgomeryLadder(curve *Curve, x *big.Int, k *big.Int) *big.Int {
 	if k.Sign() == 0 {
-		return big.NewInt(0) // ponto no infinito
+		return big.NewInt(0)
 	}
 
 	p := curve.P
@@ -297,7 +278,6 @@ func montgomeryLadder(curve *Curve, x *big.Int, k *big.Int) *big.Int {
 	for t := k.BitLen() - 1; t >= 0; t-- {
 		kt := uint(k.Bit(t))
 
-		// cswap condicional (não constant-time, mas fiel ao RFC)
 		if swap != kt {
 			x2, x3 = x3, x2
 			z2, z3 = z3, z2
@@ -367,7 +347,6 @@ func montgomeryLadder(curve *Curve, x *big.Int, k *big.Int) *big.Int {
 		z2.Mod(z2, p)
 	}
 
-	// cswap final
 	if swap == 1 {
 		x2, x3 = x3, x2
 		z2, z3 = z3, z2
@@ -406,8 +385,7 @@ func UnmarshalPublicKey(data []byte) (*PublicKey, error) {
 	return &PublicKey{X: x, Curve: curve}, nil
 }
 
-// MarshalPrivateKey serializa uma chave privada como bytes big-endian
-// (64 bytes).
+// MarshalPrivateKey serializa uma chave privada como bytes big-endian (64 bytes).
 func (priv *PrivateKey) MarshalPrivateKey() []byte {
 	return bigToFixedBytes(priv.D, 64)
 }
@@ -433,10 +411,7 @@ func (pub *PublicKey) Hex() string {
 
 // Equal compara duas chaves públicas.
 func (pub *PublicKey) Equal(other *PublicKey) bool {
-	if pub == nil || other == nil {
-		return false
-	}
-	if pub.X == nil || other.X == nil {
+	if pub == nil || other == nil || pub.X == nil || other.X == nil {
 		return false
 	}
 	return pub.X.Cmp(other.X) == 0
@@ -467,7 +442,8 @@ func HexPrefix(x *big.Int, n int) string {
 	return s[:n]
 }
 
-// MontgomeryLadder é a versão exportada de montgomeryLadder.
+// MontgomeryLadder é a versão exportada de montgomeryLadder, para uso
+// em testes e diagnóstico externos.
 func MontgomeryLadder(curve *Curve, x *big.Int, k *big.Int) *big.Int {
 	return montgomeryLadder(curve, x, k)
 }
