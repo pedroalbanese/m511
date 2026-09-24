@@ -263,13 +263,14 @@ func (curve *Curve) IsOnCurve(x *big.Int) bool {
 	return leg.Cmp(big.NewInt(1)) == 0
 }
 
-// IsInSubgroup verifica se x pertence ao subgrupo de ordem prima.
-// Para M-511 (cofator 8), isso é equivalente a order * Q == O.
+// IsInSubgroup verifica se x pertence ao subgrupo completo da curva.
+// Para M-511 (cofator 8), isso é equivalente a (order * 8) * Q == O.
 func (curve *Curve) IsInSubgroup(x *big.Int) bool {
 	if !curve.IsOnCurve(x) {
 		return false
 	}
-	orderQ := montgomeryLadder(curve, x, curve.Order)
+	fullOrder := new(big.Int).Mul(curve.Order, curve.Cofactor)
+	orderQ := montgomeryLadder(curve, x, fullOrder)
 	return orderQ.Sign() == 0
 }
 
