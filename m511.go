@@ -187,8 +187,6 @@ func (priv *PrivateKey) GetPublic() *PublicKey {
 // -----------------------------------------------------------------------------
 
 // ECDH executa a troca de chaves ECDH entre priv e pub.
-//
-// Retorna o segredo compartilhado como 64 bytes big-endian.
 func (priv *PrivateKey) ECDH(pub *PublicKey) ([]byte, error) {
 	if pub == nil || pub.X == nil {
 		return nil, errors.New("m511: chave pública inválida")
@@ -210,15 +208,19 @@ func (priv *PrivateKey) ECDH(pub *PublicKey) ([]byte, error) {
 		return nil, errors.New("m511: ponto não está na curva")
 	}
 
-	// Verifica se o ponto está no subgrupo de ordem prima.
-	// order * Q deve ser o ponto no infinito.
-	orderQ := montgomeryLadder(curve, pub.X, curve.Order)
+	// Cofactor clearing: projeta o ponto no subgrupo de ordem prima.
+	// Q' = 8 * Q
+	cleared := montgomeryLadder(curve, pub.X, curve.Cofactor)
+
+	// Verifica se o ponto limpo está no subgrupo de ordem prima.
+	// order * Q' == O
+	orderQ := montgomeryLadder(curve, cleared, curve.Order)
 	if orderQ.Sign() != 0 {
-		return nil, errors.New("m511: ponto não está no subgrupo de ordem prima")
+		return nil, errors.New("m511: ponto não está no subgrupo de ordem prima após cofactor clearing")
 	}
 
-	// Multiplicação escalar.
-	shared := montgomeryLadder(curve, pub.X, priv.D)
+	// Multiplicação escalar usando o ponto limpo.
+	shared := montgomeryLadder(curve, cleared, priv.D)
 
 	if shared.Sign() == 0 {
 		return nil, errors.New("m511: segredo compartilhado é o ponto no infinito")
