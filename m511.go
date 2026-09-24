@@ -262,7 +262,7 @@ func montgomeryLadder(curve *Curve, x *big.Int, k *big.Int) *big.Int {
 	a := curve.A
 
 	// a24 = (A + 2) / 4
-	a24 := new(big.Int).Add(a, big.NewInt(2))
+	a24 := new(big.Int).Sub(a, big.NewInt(2))
 	a24.Mul(a24, new(big.Int).ModInverse(big.NewInt(4), p))
 	a24.Mod(a24, p)
 
