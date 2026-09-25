@@ -525,18 +525,6 @@ func ParsePKIXPublicKey(der []byte) (*PublicKey, error) {
 }
 
 // -----------------------------------------------------------------------------
-// Sign/Verify (não suportados)
-// -----------------------------------------------------------------------------
-
-func (priv *PrivateKey) Sign(message []byte) ([]byte, error) {
-	return nil, errors.New("m511: Sign não suportado (use ECDH)")
-}
-
-func (pub *PublicKey) Verify(message, sig []byte) bool {
-	return false
-}
-
-// -----------------------------------------------------------------------------
 // Utilidades
 // -----------------------------------------------------------------------------
 
