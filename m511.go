@@ -4,6 +4,20 @@
 //
 // Package m511 implementa ECDH sobre a curva de Montgomery M-511,
 // com API compatível com o pacote e521 do EDGETk.
+//
+// Referência:
+//   - Diego F. Aranha, Paulo S. L. M. Barreto, Geovandro C. C. F. Pereira,
+//     Jefferson Ricardini, "A note on high-security general-purpose
+//     elliptic curves", 2013. https://eprint.iacr.org/2013/647
+//   - https://std.neuromancer.sk/other/M-511
+//   - RFC 7748 (Curve25519/Curve448) — modelo para a escada de Montgomery
+//
+// AVISO DE SEGURANÇA:
+//
+//   Esta implementação usa math/big para a aritmética de campo, que NÃO é
+//   constant-time. Ela é vulnerável a ataques de temporização (timing
+//   attacks) e de canal lateral. NÃO use em produção sem antes substituir
+//   a aritmética de campo por uma implementação constant-time.
 package m511
 
 import (
