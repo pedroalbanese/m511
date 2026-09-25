@@ -189,11 +189,13 @@ $$
 A cada iteração, para o bit $k_i$:
 
 - **Se $k_i = 0$:**
+
 $$
 (R_0, R_1) \leftarrow (2R_0,\ R_0 + R_1)
 $$
 
 - **Se $k_i = 1$:**
+
 $$
 (R_0, R_1) \leftarrow (R_0 + R_1,\ 2R_1)
 $$
