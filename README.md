@@ -44,7 +44,7 @@ $$
 O grupo de pontos da curva tem ordem
 
 $$
-\#E(\mathbb{F}_p) = h \cdot n
+\# E(\mathbb{F}_p) = h \cdot n
 $$
 
 onde
