@@ -1,6 +1,8 @@
 # ECDH sobre a Curva M-511
 M-511 Montgomery ECDH Function
 
+**M-511** is a 511-bit Montgomery elliptic curve proposed in 2013 by Diego F. Aranha, Paulo S. L. M. Barreto, Geovandro C. C. F. Pereira, and Jefferson Ricardini in *"A note on high-security general-purpose elliptic curves"* ([https://eprint.iacr.org/2013/647](https://eprint.iacr.org/2013/647)), defined over the prime field $\mathbb{F}_p$ with $p = 2^{511} - 187$ and equation $y^2 = x^3 + A x^2 + x \pmod{p}$ where $A = 530438$, offering approximately **256 bits of classical security** against the best known attack (Pollard's rho, with complexity $O(\sqrt{n}) \approx O(2^{256}))$; it is intended for ephemeral Elliptic Curve Diffie-Hellman (**ECDHE**) key agreement, where two parties each generate a private scalar $d \in [1, n-1]$ and a public point $Q = dG$ (with $G = (5, \ldots)$ the generator and $n = 2^{256} \cdot (2^{255} - 765)$ the prime subgroup order), exchange public keys over an insecure channel, and independently compute the shared secret $S = d_A Q_B = d_B Q_A$, using the **Montgomery ladder** for constant-sequence scalar multiplication and **point compression** (64-byte big-endian encoding of the $x$-coordinate only) to halve public key size.
+
 ## 1. Corpo finito
 
 Seja o corpo primo $\mathbb{F}_p$, onde
@@ -392,3 +394,210 @@ O(\sqrt{n}) \approx O(2^{256})
 $$
 
 operações, o que é inviável com a tecnologia atual.
+
+## Exemplo de Uso
+
+```go
+package main
+
+import (
+	"bytes"
+	"crypto/rand"
+	"encoding/asn1"
+	"encoding/hex"
+	"fmt"
+	"math/big"
+
+	"github.com/pedroalbanese/m511"
+)
+
+func main() {
+	fmt.Println("=== ECDH M-511 — Teste Completo com PKCS#8 ===")
+	fmt.Println()
+
+	c := m511.M511()
+	fmt.Printf("p        = %s...\n", m511.HexPrefix(c.P, 32))
+	fmt.Printf("A        = 0x%s\n", c.A.Text(16))
+	fmt.Printf("Order    = %s...\n", m511.HexPrefix(c.Order, 32))
+	fmt.Printf("Cofactor = %d\n", c.Cofactor)
+	fmt.Println()
+
+	// 1. Gera chaves.
+	alicePriv, alicePub, err := m511.GenerateKeyWithReader(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	bobPriv, bobPub, err := m511.GenerateKeyWithReader(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("--- 1. Chaves geradas ---")
+	fmt.Printf("Alice priv (D)  = %s...\n", m511.HexPrefix(alicePriv.D, 32))
+	fmt.Printf("Alice pub  (X)  = %s...\n", m511.HexPrefix(alicePub.X, 32))
+	fmt.Printf("Bob   priv (D)  = %s...\n", m511.HexPrefix(bobPriv.D, 32))
+	fmt.Printf("Bob   pub  (X)  = %s...\n", m511.HexPrefix(bobPub.X, 32))
+	fmt.Println()
+
+	// 2. Marshal/Unmarshal chave privada (64 bytes).
+	fmt.Println("--- 2. Marshal/Unmarshal de chave privada (64 bytes) ---")
+	privBytes := alicePriv.MarshalPrivateKey()
+	fmt.Printf("Tamanho: %d bytes\n", len(privBytes))
+	alicePriv2, err := m511.UnmarshalPrivateKey(privBytes)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Round-trip OK: %v\n", alicePriv.D.Cmp(alicePriv2.D) == 0)
+	fmt.Println()
+
+	// 3. Marshal/Unmarshal chave pública (64 bytes).
+	fmt.Println("--- 3. Marshal/Unmarshal de chave pública (64 bytes) ---")
+	pubBytes := alicePub.Marshal()
+	fmt.Printf("Tamanho: %d bytes\n", len(pubBytes))
+	alicePub2, err := m511.UnmarshalPublicKey(pubBytes)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Round-trip OK: %v\n", alicePub.Equal(alicePub2))
+	fmt.Println()
+
+	// 4. PKCS#8.
+	fmt.Println("--- 4. PKCS#8 (chave privada) ---")
+	alicePKCS8, err := alicePriv.MarshalPKCS8PrivateKey()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Tamanho DER: %d bytes\n", len(alicePKCS8))
+	fmt.Printf("DER (hex):   %s\n", hex.EncodeToString(alicePKCS8))
+	alicePriv3, err := m511.ParsePKCS8PrivateKey(alicePKCS8)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Round-trip OK: %v\n", alicePriv.D.Cmp(alicePriv3.D) == 0)
+	fmt.Println()
+
+	// 5. PKIX.
+	fmt.Println("--- 5. PKIX (chave pública) ---")
+	alicePKIX, err := alicePub.MarshalPKIXPublicKey()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Tamanho DER: %d bytes\n", len(alicePKIX))
+	fmt.Printf("DER (hex):   %s\n", hex.EncodeToString(alicePKIX))
+	alicePub3, err := m511.ParsePKIXPublicKey(alicePKIX)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Round-trip OK: %v\n", alicePub.Equal(alicePub3))
+	fmt.Println()
+
+	// 6. ECDH com chaves PKCS#8/PKIX.
+	fmt.Println("--- 6. ECDH com chaves PKCS#8/PKIX ---")
+	alicePrivPKCS8, err := m511.ParsePKCS8PrivateKey(alicePKCS8)
+	if err != nil {
+		panic(err)
+	}
+	bobPKIX, err := bobPub.MarshalPKIXPublicKey()
+	if err != nil {
+		panic(err)
+	}
+	bobPubPKIX, err := m511.ParsePKIXPublicKey(bobPKIX)
+	if err != nil {
+		panic(err)
+	}
+	aliceShared, err := alicePrivPKCS8.ECDH(bobPubPKIX)
+	if err != nil {
+		panic(err)
+	}
+	bobShared, err := bobPriv.ECDH(alicePub3)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Alice calcula: %s\n", hex.EncodeToString(aliceShared))
+	fmt.Printf("Bob   calcula: %s\n", hex.EncodeToString(bobShared))
+	fmt.Println()
+	if bytes.Equal(aliceShared, bobShared) {
+		fmt.Println("✓ SUCESSO: ECDH com chaves PKCS#8/PKIX funcionou!")
+	} else {
+		fmt.Println("✗ FALHA: segredos compartilhados diferentes!")
+	}
+	fmt.Println()
+
+	// 7. Testes de rejeição.
+	fmt.Println("--- 7. Testes de rejeição ---")
+
+	// 7.1. PKCS#8 com OID errado.
+	wrongOID := append([]byte{}, alicePKCS8...)
+	wrongOID[10] ^= 0xFF
+	_, err = m511.ParsePKCS8PrivateKey(wrongOID)
+	fmt.Printf("PKCS#8 com OID errado rejeitado: %v\n", err != nil)
+
+	// 7.2. PKIX truncado.
+	truncated := alicePKIX[:len(alicePKIX)-10]
+	_, err = m511.ParsePKIXPublicKey(truncated)
+	fmt.Printf("PKIX truncado rejeitado: %v\n", err != nil)
+
+	// 7.3. Chave privada com D = 0.
+	zeroD := make([]byte, 64)
+	type pkcs8Raw struct {
+		Version             int
+		PrivateKeyAlgorithm struct {
+			Algorithm  asn1.ObjectIdentifier
+			Parameters asn1.RawValue `asn1:"optional"`
+		}
+		PrivateKey []byte
+	}
+	infoRaw := pkcs8Raw{
+		Version: 0,
+		PrivateKeyAlgorithm: struct {
+			Algorithm  asn1.ObjectIdentifier
+			Parameters asn1.RawValue `asn1:"optional"`
+		}{
+			Algorithm:  asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1, 1},
+			Parameters: asn1.RawValue{Tag: asn1.TagOID},
+		},
+		PrivateKey: zeroD,
+	}
+	zeroPKCS8, err := asn1.Marshal(infoRaw)
+	if err != nil {
+		panic(err)
+	}
+	_, err = m511.ParsePKCS8PrivateKey(zeroPKCS8)
+	fmt.Printf("PKCS#8 com D=0 rejeitado: %v\n", err != nil)
+
+	// 7.4. Chave pública com X >= p.
+	bigX := new(big.Int).Add(c.P, big.NewInt(1))
+	bigXBytes := make([]byte, 64)
+	bigX.FillBytes(bigXBytes)
+	type pkixRaw struct {
+		Algorithm struct {
+			Algorithm  asn1.ObjectIdentifier
+			Parameters asn1.RawValue `asn1:"optional"`
+		}
+		SubjectPublicKey asn1.BitString
+	}
+	pkixInfoRaw := pkixRaw{}
+	pkixInfoRaw.Algorithm.Algorithm = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1, 1}
+	pkixInfoRaw.Algorithm.Parameters = asn1.RawValue{Tag: asn1.TagOID}
+	pkixInfoRaw.SubjectPublicKey = asn1.BitString{
+		Bytes:     bigXBytes,
+		BitLength: len(bigXBytes) * 8,
+	}
+	bigPKIX, err := asn1.Marshal(pkixInfoRaw)
+	if err != nil {
+		panic(err)
+	}
+	_, err = m511.ParsePKIXPublicKey(bigPKIX)
+	fmt.Printf("PKIX com X >= p rejeitado: %v\n", err != nil)
+
+	fmt.Println()
+	fmt.Println("=== Fim dos testes ===")
+}
+```
+
+## License
+
+This project is licensed under the ISC License.
+
+#### Copyright (c) 2020-2026 Pedro F. Albanese - ALBANESE Research Lab.  
+Todos os direitos de propriedade intelectual sobre este software pertencem ao autor, Pedro F. Albanese. Vide Lei 9.610/98, Art. 7º, inciso XII.
